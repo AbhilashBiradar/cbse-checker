@@ -70,7 +70,7 @@ def check_digilocker():
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
             page.goto("https://results.digilocker.gov.in/", timeout=30000)
-            page.wait_for_timeout(3000)  # wait for JS to render
+            page.wait_for_selector("div.CISCE", timeout=15000)  # wait until CBSE card renders
             html = page.content()
             browser.close()
 
