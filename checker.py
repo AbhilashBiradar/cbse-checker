@@ -21,46 +21,6 @@ if os.path.exists(FLAG_FILE):
     print("Already notified. Skipping.")
     sys.exit(0)
 
-# ── Source 1: DigiLocker ──────────────────────────────────────────────────────
-def check_digilocker():
-    try:
-        full_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-        }
-        resp = requests.get(DIGILOCKER_URL, headers=full_headers, timeout=15)
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        # Primary: find CBSE card by class
-        cbse_card = soup.find("div", class_="CISCE")
-        if cbse_card:
-            btn = cbse_card.parent.find("a", class_=lambda c: c and "btn" in c)
-            if btn:
-                href = btn.get("href", "").strip()
-                text = btn.get_text(strip=True)
-                if "coming soon" not in text.lower() or href not in ("", "#"):
-                    return True, f"'{text}' -> {href or DIGILOCKER_URL}"
-                return False, text
-
-        # Fallback: search all links for CBSE Class X
-        for a in soup.find_all("a", href=True):
-            t = a.get_text(strip=True).lower()
-            h = a.get("href", "").strip()
-            if "class x" in t and "cbse" in resp.text.lower():
-                if "coming soon" not in t and h not in ("", "#"):
-                    return True, f"Fallback: '{a.get_text(strip=True)}' -> {h}"
-
-        # Check if page even loaded correctly
-        if "cbse" not in resp.text.lower():
-            return None, f"DigiLocker returned unexpected page (status {resp.status_code})"
-
-        return False, "CBSE Class X — Coming Soon"
-    except Exception as e:
-        return None, str(e)
 
 # ── Source 1: DigiLocker (playwright — real browser) ──────────────────────────
 def check_digilocker():
@@ -69,23 +29,47 @@ def check_digilocker():
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
-            page.goto("https://results.digilocker.gov.in/", timeout=30000)
-            page.wait_for_selector("div.CISCE", timeout=15000)  # wait until CBSE card renders
+            # Wait until network is idle so JS-rendered cards are present
+            page.goto("https://results.digilocker.gov.in/", timeout=60000,
+                      wait_until="networkidle")
+            # Extra buffer for slow cloud runners
+            page.wait_for_timeout(3000)
             html = page.content()
             browser.close()
 
         soup = BeautifulSoup(html, "html.parser")
-        cbse_card = soup.find("div", class_="CISCE")
-        if not cbse_card:
-            return None, "CBSE card not found after JS render"
-        btn = cbse_card.parent.find("a", class_=lambda c: c and "btn" in c)
-        if not btn:
-            return None, "Button not found"
-        href = btn.get("href", "").strip()
-        text = btn.get_text(strip=True)
-        if "coming soon" not in text.lower() or href not in ("", "#"):
-            return True, f"'{text}' -> {href or 'https://results.digilocker.gov.in/'}"
-        return False, text
+
+        # Dump a short preview for debugging (first 2000 chars stripped of tags)
+        text_preview = " ".join(soup.get_text(" ").split())[:500]
+        print(f"  [DigiLocker page text preview]: {text_preview}")
+
+        # Strategy 1: look for div with class containing "CISCE" or "CBSE"
+        cbse_card = (soup.find("div", class_=lambda c: c and ("CISCE" in c or "CBSE" in c))
+                     or soup.find("div", class_=lambda c: c and "cbse" in c.lower()))
+
+        if cbse_card:
+            btn = (cbse_card.parent.find("a", class_=lambda c: c and "btn" in c)
+                   or cbse_card.find("a", href=True))
+            if btn:
+                href = btn.get("href", "").strip()
+                text = btn.get_text(strip=True)
+                if "coming soon" not in text.lower() or href not in ("", "#"):
+                    return True, f"'{text}' -> {href or 'https://results.digilocker.gov.in/'}"
+                return False, f"CBSE card found — {text}"
+            return False, "CBSE card found but no link yet"
+
+        # Strategy 2: scan all <a> tags for CBSE + Class X
+        page_lower = html.lower()
+        if "cbse" in page_lower:
+            for a in soup.find_all("a", href=True):
+                t = a.get_text(strip=True)
+                h = a.get("href", "").strip()
+                if "cbse" in t.lower() and "class x" in t.lower():
+                    if "coming soon" not in t.lower() and h not in ("", "#"):
+                        return True, f"Link scan: '{t}' -> {h}"
+            return False, "CBSE mentioned on page but no Class X result link yet"
+
+        return None, f"CBSE not found on DigiLocker page (len={len(html)})"
     except Exception as e:
         return None, str(e)
 
