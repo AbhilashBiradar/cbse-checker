@@ -6,7 +6,6 @@ Sends email (Gmail) when result goes live. Writes a flag to stop repeat alerts.
 """
 
 import os, sys, smtplib, requests
-from curl_cffi import requests as cffi_requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 from email.mime.text import MIMEText
@@ -63,14 +62,22 @@ def check_digilocker():
     except Exception as e:
         return None, str(e)
 
-# ── Source 1: DigiLocker (curl-cffi bypasses Cloudflare) ──────────────────────
+# ── Source 1: DigiLocker (playwright — real browser) ──────────────────────────
 def check_digilocker():
     try:
-        resp = cffi_requests.get("https://results.digilocker.gov.in/", impersonate="chrome120", timeout=15)
-        soup = BeautifulSoup(resp.text, "html.parser")
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto("https://results.digilocker.gov.in/", timeout=30000)
+            page.wait_for_timeout(3000)  # wait for JS to render
+            html = page.content()
+            browser.close()
+
+        soup = BeautifulSoup(html, "html.parser")
         cbse_card = soup.find("div", class_="CISCE")
         if not cbse_card:
-            return None, f"CBSE card not found (status {resp.status_code})"
+            return None, "CBSE card not found after JS render"
         btn = cbse_card.parent.find("a", class_=lambda c: c and "btn" in c)
         if not btn:
             return None, "Button not found"
