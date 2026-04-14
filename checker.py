@@ -25,18 +25,41 @@ if os.path.exists(FLAG_FILE):
 # ── Source 1: DigiLocker ──────────────────────────────────────────────────────
 def check_digilocker():
     try:
-        soup = BeautifulSoup(requests.get(DIGILOCKER_URL, headers=HEADERS, timeout=15).text, "html.parser")
+        full_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+        }
+        resp = requests.get(DIGILOCKER_URL, headers=full_headers, timeout=15)
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        # Primary: find CBSE card by class
         cbse_card = soup.find("div", class_="CISCE")
-        if not cbse_card:
-            return None, "CBSE card not found"
-        btn = cbse_card.parent.find("a", class_=lambda c: c and "btn" in c)
-        if not btn:
-            return None, "Button not found"
-        href = btn.get("href", "").strip()
-        text = btn.get_text(strip=True)
-        if "coming soon" not in text.lower() or href not in ("", "#"):
-            return True, f"'{text}' -> {href or DIGILOCKER_URL}"
-        return False, text
+        if cbse_card:
+            btn = cbse_card.parent.find("a", class_=lambda c: c and "btn" in c)
+            if btn:
+                href = btn.get("href", "").strip()
+                text = btn.get_text(strip=True)
+                if "coming soon" not in text.lower() or href not in ("", "#"):
+                    return True, f"'{text}' -> {href or DIGILOCKER_URL}"
+                return False, text
+
+        # Fallback: search all links for CBSE Class X
+        for a in soup.find_all("a", href=True):
+            t = a.get_text(strip=True).lower()
+            h = a.get("href", "").strip()
+            if "class x" in t and "cbse" in resp.text.lower():
+                if "coming soon" not in t and h not in ("", "#"):
+                    return True, f"Fallback: '{a.get_text(strip=True)}' -> {h}"
+
+        # Check if page even loaded correctly
+        if "cbse" not in resp.text.lower():
+            return None, f"DigiLocker returned unexpected page (status {resp.status_code})"
+
+        return False, "CBSE Class X — Coming Soon"
     except Exception as e:
         return None, str(e)
 
