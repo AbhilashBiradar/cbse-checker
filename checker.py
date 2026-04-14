@@ -6,6 +6,7 @@ Sends email (Gmail) when result goes live. Writes a flag to stop repeat alerts.
 """
 
 import os, sys, smtplib, requests
+from curl_cffi import requests as cffi_requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 from email.mime.text import MIMEText
@@ -62,6 +63,26 @@ def check_digilocker():
     except Exception as e:
         return None, str(e)
 
+# ── Source 1: DigiLocker (curl-cffi bypasses Cloudflare) ──────────────────────
+def check_digilocker():
+    try:
+        resp = cffi_requests.get("https://results.digilocker.gov.in/", impersonate="chrome120", timeout=15)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        cbse_card = soup.find("div", class_="CISCE")
+        if not cbse_card:
+            return None, f"CBSE card not found (status {resp.status_code})"
+        btn = cbse_card.parent.find("a", class_=lambda c: c and "btn" in c)
+        if not btn:
+            return None, "Button not found"
+        href = btn.get("href", "").strip()
+        text = btn.get_text(strip=True)
+        if "coming soon" not in text.lower() or href not in ("", "#"):
+            return True, f"'{text}' -> {href or 'https://results.digilocker.gov.in/'}"
+        return False, text
+    except Exception as e:
+        return None, str(e)
+
+
 # ── Source 2: results.cbse.nic.in ─────────────────────────────────────────────
 def check_nic():
     try:
@@ -107,12 +128,15 @@ def send_email(subject, body):
 ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
 print(f"[{ts}] Checking both sources...")
 
+dl_avail,  dl_detail  = check_digilocker()
 nic_avail, nic_detail = check_nic()
+print(f"  DigiLocker  : {'LIVE — ' + dl_detail if dl_avail else dl_detail}")
 print(f"  cbse.nic.in : {'LIVE — ' + nic_detail if nic_avail else nic_detail}")
 
 found, summary, link = False, "", ""
-
-if nic_avail:
+if dl_avail:
+    found, summary, link = True, dl_detail, "https://results.digilocker.gov.in/"
+elif nic_avail:
     found, summary, link = True, nic_detail, NIC_URL
 
 if found:
