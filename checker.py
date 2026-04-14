@@ -11,8 +11,7 @@ from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-DIGILOCKER_URL = "https://results.digilocker.gov.in/"
-NIC_URL        = "https://results.cbse.nic.in/"
+NIC_URL = "https://results.cbse.nic.in/"
 FLAG_FILE      = "notified.flag"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
@@ -108,17 +107,12 @@ def send_email(subject, body):
 ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
 print(f"[{ts}] Checking both sources...")
 
-dl_avail,  dl_detail  = check_digilocker()
 nic_avail, nic_detail = check_nic()
-
-print(f"  DigiLocker  : {'LIVE — ' + dl_detail if dl_avail else dl_detail}")
 print(f"  cbse.nic.in : {'LIVE — ' + nic_detail if nic_avail else nic_detail}")
 
 found, summary, link = False, "", ""
 
-if dl_avail:
-    found, summary, link = True, dl_detail, DIGILOCKER_URL
-elif nic_avail:
+if nic_avail:
     found, summary, link = True, nic_detail, NIC_URL
 
 if found:
