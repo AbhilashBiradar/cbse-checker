@@ -18,6 +18,7 @@ CBSE_GOV_URL = "https://www.cbse.gov.in/cbsenew/CBSE_Main_Site/main/announcement
 FLAG_FILE    = "notified.flag"
 HEADERS      = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 CLASS_X_KEYS = ["class x", "class 10", "secondary", "x result", "10th", "class-x", "10 result"]
+CLASS_X_EXCLUDE = ["class xii", "class 12", "12th", "senior secondary", "aissce", "xii result"]
 
 # ── Already notified? ─────────────────────────────────────────────────────────
 if os.path.exists(FLAG_FILE):
@@ -30,19 +31,21 @@ def check_nic():
     try:
         resp = requests.get(NIC_URL, headers=HEADERS, timeout=15)
         soup = BeautifulSoup(resp.text, "html.parser")
-        # Look for 2026 results section
-        section = next((h2.parent for h2 in soup.find_all("h2")
-                        if "2026" in h2.get_text() and "result" in h2.get_text().lower()), None)
-        if not section:
-            # Fallback: scan all links on the page
-            section = soup
-        for a in section.find_all("a", href=True):
-            t = a.get_text(strip=True).lower()
-            h = a.get("href", "").strip()
-            if any(k in t for k in CLASS_X_KEYS) and "2026" in a.get_text():
-                return True, f"'{a.get_text(strip=True)}' -> {h}"
-        links = [a.get_text(strip=True) for a in section.find_all("a")][:5]
-        return False, f"No Class X 2026 link. Recent: {links}"
+        # Only scan links; do NOT fall back to whole page — too many false positives
+        for a in soup.find_all("a", href=True):
+            t = a.get_text(strip=True)
+            t_lower = t.lower()
+            # Must mention 2026, a Class X keyword, and "cbse" (to exclude other boards)
+            if (
+                "2026" in t
+                and any(k in t_lower for k in CLASS_X_KEYS)
+                and "cbse" in t_lower
+                and not any(ex in t_lower for ex in CLASS_X_EXCLUDE)
+            ):
+                return True, f"'{t}' -> {a.get('href', '').strip()}"
+        links = [a.get_text(strip=True) for a in soup.find_all("a", href=True)
+                 if "cbse" in a.get_text(strip=True).lower()][:5]
+        return False, f"No CBSE Class X 2026 link. CBSE links found: {links}"
     except Exception as e:
         return None, str(e)
 
@@ -50,9 +53,9 @@ def check_nic():
 # ── Source 2: cbseresults.nic.in (goes live when results release) ──────────────
 def check_nic2():
     """
-    When results are live this page shows a result-entry form.
-    When not live it shows a 'Results not available' message or redirects.
-    We treat any page that contains a roll-number input as LIVE.
+    When CBSE Class X results are live this page shows a result-entry form
+    with "Class X" / "Secondary" context visible.
+    Guard against other board results (e.g. MP, UP) also hosted here.
     """
     try:
         resp = requests.get(NIC2_URL, headers=HEADERS, timeout=15, allow_redirects=True)
@@ -64,7 +67,14 @@ def check_nic2():
         # Roll-number input present → results entry form is live
         has_roll_input = bool(soup.find("input", {"name": lambda n: n and "roll" in n.lower()}))
         if has_roll_input:
-            return True, f"Result entry form detected at {NIC2_URL}"
+            # Only count as CBSE Class X if the page mentions CBSE + class x context
+            is_cbse = "cbse" in text_lower
+            is_class_x = any(k in text_lower for k in CLASS_X_KEYS)
+            is_not_class_xii = not any(ex in text_lower for ex in ["class xii", "class 12", "senior secondary", "aissce"])
+            if is_cbse and is_class_x and is_not_class_xii:
+                return True, f"CBSE Class X result entry form detected at {NIC2_URL}"
+            else:
+                return False, f"Roll input found but not CBSE Class X (cbse={is_cbse}, classX={is_class_x})"
 
         # Explicit "not available" / "coming soon" text
         not_live_phrases = ["not available", "coming soon", "will be declared", "await"]
@@ -87,10 +97,14 @@ def check_cbse_gov():
             t = a.get_text(strip=True)
             t_lower = t.lower()
             h = a.get("href", "").strip()
-            if "2026" in t and any(k in t_lower for k in CLASS_X_KEYS):
-                if any(w in t_lower for w in ["result", "declared", "available", "announce"]):
-                    return True, f"'{t}' -> {h}"
-        return False, "No Class X 2026 result announcement yet"
+            if (
+                "2026" in t
+                and any(k in t_lower for k in CLASS_X_KEYS)
+                and any(w in t_lower for w in ["result", "declared", "available", "announce"])
+                and not any(ex in t_lower for ex in CLASS_X_EXCLUDE)
+            ):
+                return True, f"'{t}' -> {h}"
+        return False, "No CBSE Class X 2026 result announcement yet"
     except Exception as e:
         return None, str(e)
 
