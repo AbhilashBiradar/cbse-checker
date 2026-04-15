@@ -26,6 +26,9 @@ CLASS_X_EXCLUDE = ["class xii", "class 12", "12th", "senior secondary", "aissce"
 
 
 # ── Source 1: DigiLocker (works on residential IPs, blocked on cloud) ─────────
+import re as _re
+_STATE_BOARD_RE = _re.compile(r'^[A-Z]{2}20\d{2}', _re.IGNORECASE)  # e.g. MP2026..., UP2026...
+
 def check_digilocker():
     try:
         from playwright.sync_api import sync_playwright
@@ -39,38 +42,35 @@ def check_digilocker():
 
         soup = BeautifulSoup(html, "html.parser")
 
-        # Find CBSE card by any class containing CISCE/CBSE
+        # Find the CBSE-specific card div
         cbse_card = (
             soup.find("div", class_=lambda c: c and ("CISCE" in c or "CBSE" in c))
             or soup.find("div", class_=lambda c: c and "cbse" in c.lower())
         )
         if cbse_card:
-            btn = (
-                cbse_card.parent.find("a", class_=lambda c: c and "btn" in c)
-                or cbse_card.find("a", href=True)
-            )
+            # Search ONLY inside the CBSE card — never in its parent (other boards live there)
+            btn = cbse_card.find("a", href=True)
             if btn:
                 href = btn.get("href", "").strip()
                 text = btn.get_text(strip=True)
-                # LIVE only if: "coming soon" is gone AND href is a real URL
+                print(f"  [DigiLocker CBSE card] text='{text}' href='{href}'")
+
+                # Reject if href looks like another state board file (MP2026..., UP2026...)
+                if _STATE_BOARD_RE.match(href):
+                    return False, f"State-board link ignored: {href}"
+
                 is_coming_soon = "coming soon" in text.lower()
-                is_real_link   = href.startswith("http") or (href and href not in ("#", "javascript:void(0)"))
-                if not is_coming_soon or is_real_link:
+                # A real CBSE result link points to an http URL or a non-empty non-# path
+                is_real_link = href.startswith("http") or (
+                    href and href not in ("#", "javascript:void(0)", "")
+                    and not _STATE_BOARD_RE.match(href)
+                )
+                if not is_coming_soon and is_real_link:
                     return True, f"'{text}' -> {href}"
-                return False, f"Coming Soon ({text})"
-            return False, "CBSE card visible, no link yet"
+                return False, f"Coming Soon or no valid link ({text} | {href})"
+            return False, "CBSE card visible but no link yet"
 
-        # Fallback: scan all links
-        if "cbse" in html.lower():
-            for a in soup.find_all("a", href=True):
-                t = a.get_text(strip=True)
-                h = a.get("href", "").strip()
-                if "cbse" in t.lower() and "class x" in t.lower():
-                    if "coming soon" not in t.lower() and h not in ("", "#"):
-                        return True, f"'{t}' -> {h}"
-            return False, "CBSE on page, no Class X link yet"
-
-        return None, f"Unexpected page (len={len(html)})"
+        return False, "CBSE card not found on DigiLocker page"
     except Exception as e:
         return None, f"DigiLocker error: {e}"
 
